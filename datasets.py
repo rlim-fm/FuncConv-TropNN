@@ -5,5 +5,5 @@ import json
 
 rng = np.random.default_rng(42)
 
-def topksubset(X, k):
-    torch.sum(torch.topk(X, k, dim=-1).values, dim=-1)
+def topksubset(k):
+    return lambda x: torch.sum(torch.topk(x, k, dim=-1).values, dim=-1)
