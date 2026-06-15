@@ -1,10 +1,46 @@
 import math
 from math import comb
 from itertools import combinations
+from typing import Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+class MLP(nn.Module):
+    """Simple fully-connected MLP for regression.
+
+    Args:
+        input_dim: dimensionality of input
+        hidden_sizes: sequence of hidden layer sizes
+        output_dim: dimensionality of output (1 for scalar regression)
+        activation: activation class from torch.nn (default: nn.ReLU)
+        dropout: dropout probability (default: 0.0)
+    """
+
+    def __init__(self,
+                 input_dim: int = 1,
+                 hidden_sizes: Sequence[int] = (64, 64),
+                 activation = None,
+                 output_dim: int = 1,
+                 dropout: float = 0.0
+                 ):
+        super().__init__()
+        if activation is None:
+            activation = nn.ReLU()
+        layers = []
+        in_dim = input_dim
+        for h in hidden_sizes:
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(activation)
+            if dropout and dropout > 0.0:
+                layers.append(nn.Dropout(p=dropout))
+            in_dim = h
+        self.net = nn.Sequential(*layers)
+        self.output_layer = nn.Linear(in_dim, output_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x)
 
 ################################################################################
 ## 2. MODEL DEFINITIONS (Vanilla & Tropical Transformers)
@@ -559,14 +595,12 @@ class SimpleTransformerModel(nn.Module):
         dropout: float = 0.0,
         tropical: bool = False,
         tropical_attention_cls=None,
-        classification: bool = False,
         pool: bool = False,
         pre_norm: bool = False,
         aggregator: str = 'softmax',
     ):
         super().__init__()
         self.input_linear = nn.Linear(input_dim, d_model)
-        self.classification = classification
 
         # Choose attention class
         attn_cls = VanillaAttention
@@ -584,7 +618,7 @@ class SimpleTransformerModel(nn.Module):
             aggregator=aggregator,
         )       
         self.pool = pool
-        self.output_linear = nn.Linear(d_model, num_classes)
+        self.output_layer = nn.Linear(d_model, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.input_linear(x) # [B, S]
