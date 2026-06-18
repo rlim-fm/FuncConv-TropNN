@@ -81,6 +81,10 @@ class Visualizer:
         epoch_text = ax.text(0.05, 0.95, '', transform=ax.transAxes, fontsize=12,
                             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
+        # Training domain shading
+        x_min, x_max = self.metadata.get('x_range')
+        ax.axvspan(xmin=x_min, xmax=x_max, color='blue', alpha=0.1, label='Training domain')
+
         # Set axis limits
         x_margin = (x_1d.max() - x_1d.min()) * 0.05
         y_min, y_max = float(min(y_1d.min(), f_1d.min())), float(max(y_1d.max(), f_1d.max()))
@@ -107,11 +111,10 @@ class Visualizer:
         anim = FuncAnimation(fig, update, frames=epochs, init_func=init,
                             blit=True, interval=50)
         if output_path is not None:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             anim.save(output_path, writer='pillow', fps=15)
             print(f"✓ 1D convergence animation saved to '{output_path}'")
-        
-        plt.close(fig)
-        return anim
+        return fig, anim
 
     def hidden_layer_visualization(self,
                                    pca_epoch: int | str=-1,
@@ -218,14 +221,15 @@ class Visualizer:
         # Compute global ranges for consistent axis limits
         pc1_all = pc1_all_frames.flatten()
         pc2_all = pc2_all_frames.flatten()
-        output_all = f_test.flatten()
+        f_flat = f_test.flatten()
 
         margin_pc1 = (pc1_all.max() - pc1_all.min()) * 0.1
         margin_pc2 = (pc2_all.max() - pc2_all.min()) * 0.1
-        margin_out = (output_all.max() - output_all.min()) * 0.1
+        z_min, z_max = min(float(y_flat.min()), float(f_flat.min())), max(float(y_flat.max()), float(f_flat.max()))
+        margin_out = (z_max - z_min) * 0.1
         x_lim = pc1_all.min() - margin_pc1, pc1_all.max() + margin_pc1
         y_lim = pc2_all.min() - margin_pc2, pc2_all.max() + margin_pc2
-        z_lim = output_all.min() - margin_out, output_all.max() + margin_out
+        z_lim = z_min - margin_out, z_max + margin_out
 
         def set_static():
             ax.set_xlim(x_lim)
@@ -265,10 +269,11 @@ class Visualizer:
         anim = FuncAnimation(fig, update, frames=epochs, init_func=init,
                              blit=True, interval=50)
 
-        anim.save(output_path, writer='pillow', fps=15)
-        plt.close(fig)
+        if output_path is not None:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            anim.save(output_path, writer='pillow', fps=15)
         print(f"✓ PCA 3D animation saved to '{output_path}'")
-        return anim
+        return fig, anim
 
 
     def plot_loss_history(self, 
@@ -303,6 +308,7 @@ class Visualizer:
         ax.legend(fontsize=11)
         fig.tight_layout()
         if output_path is not None:
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             plt.savefig(output_path, dpi=150)
             print(f"✓ Loss history saved to '{output_path}'")
         return fig
@@ -314,7 +320,7 @@ class Visualizer:
         hidden_shape = np.array(self.logs['hidden_states']).shape
     
         print("\n" + "=" * 75)
-        print("TRAINING SUMMARY (from logged logs)")
+        print("TRAINING SUMMARY (from logs)")
         print("=" * 75)
         print(f"\n[Loss Statistics]")
         print(f"  Final train loss: {self.logs['train_loss'][-1]:.6f}")

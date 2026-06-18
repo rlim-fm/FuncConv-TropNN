@@ -1,7 +1,7 @@
 import math
 from math import comb
 from itertools import combinations
-from typing import Sequence, Tuple, Union
+from typing import Sequence
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,7 @@ class Model(nn.Module):
         super().__init__()
         self.output_layer = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         pass
 
 class MLP(Model):
@@ -48,8 +48,10 @@ class MLP(Model):
         self.net = nn.Sequential(*layers)
         self.output_layer = nn.Linear(in_dim, output_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        hidden = self.net(x)
+        out = self.output_layer(hidden)
+        return out, hidden
 
 ################################################################################
 ## 2. MODEL DEFINITIONS (Vanilla & Tropical Transformers)
@@ -629,10 +631,11 @@ class SimpleTransformerModel(Model):
         self.pool = pool
         self.output_layer = nn.Linear(d_model, num_classes)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         x = self.input_linear(x) # [B, S]
         x = self.encoder(x) # [B, S, d_model]  
         if self.pool:
             x = x.mean(dim=1) # [B, d_model]
         hidden = x
-        return hidden
+        out = self.output_layer(x)
+        return out, hidden

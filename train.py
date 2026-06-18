@@ -89,7 +89,7 @@ class Processor:
             "x_range": x_range,
             "data_dim": data_dim,
             "N": N,
-            "ground_truth": ground_truth.__name__,
+            "ground_truth": ground_truth.__class__.__name__,
             "model": model.__class__.__name__,
             "optimizer": self.optimizer.__class__.__name__,
             "criterion": criterion.__class__.__name__,
@@ -152,9 +152,9 @@ class Processor:
     def train_epoch(self):
         self.model.train()
         self.optimizer.zero_grad()
-        hidden_train = self.model(self.x_train)
-        out_train = self.model.output_layer(hidden_train).squeeze()
-        train_loss = self.criterion(out_train, self.y_train)
+        out, hidden = self.model(self.x_train)
+        out = out.squeeze()
+        train_loss = self.criterion(out, self.y_train)
         self.logs['train_loss'].append(train_loss.item())
         train_loss.backward()
         self.optimizer.step()
@@ -164,20 +164,24 @@ class Processor:
     def test_epoch(self):
         self.model.eval()
         with torch.no_grad():
-            hidden_test = self.model(self.x_test)
-            out_test = self.model.output_layer(hidden_test).squeeze()
-            test_loss = self.criterion(out_test, self.y_test)
+            out, hidden = self.model(self.x_test)
+            out = out.squeeze()
+            test_loss = self.criterion(out, self.y_test)
             self.logs['test_loss'].append(test_loss.item())
-            self.logs['f_test'].append(out_test.cpu().numpy())
-            self.logs['hidden_states'].append(hidden_test.cpu().numpy())
+            self.logs['f_test'].append(out.cpu().numpy())
+            self.logs['hidden_states'].append(hidden.cpu().numpy())
 
 
     def run(self):
-        for _ in trange(self.epochs, desc="Training"):
+        for _ in trange(self.epochs, desc=f"Training"):
             self.train_epoch()
             self.test_epoch()
             if self.scheduler:
                 self.scheduler.step()
+
+        # convert to np arrays
+        for key, val in self.logs.items():
+            self.logs[key] = np.array(val)
 
         print(f"\nTraining complete!")
         print(f"Final losses: Train Loss: {self.logs['train_loss'][-1]:.6f}, Test Loss: {self.logs['test_loss'][-1]:.6f}")
@@ -289,9 +293,9 @@ class Processor:
 
 def main():
     """Main training script using OOP Processor."""
-    model = SimpleTransformerModel(input_dim=1)
-    optimizer = optim.Adam(model.parameters())
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.5)
+    model = SimpleTransformerModel(input_dim=1, dropout=0.1)
+    optimizer = optim.AdamW(model.parameters(),lr=1e-4)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
     processor = Processor(
         x_range=(-8, 8),
         data_dim=(10, 1),
