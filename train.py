@@ -1,4 +1,4 @@
-
+import numpy as np
 from scipy.stats import qmc
 import torch.optim as optim
 
@@ -15,7 +15,7 @@ class Processor:
                  N: int=2048,
                  ground_truth=None,
                  model=None,
-                 epochs: int=1000,
+                 epochs: int=3000,
                  criterion=None,
                  optimizer=None,
                  scheduler=None,
@@ -25,7 +25,7 @@ class Processor:
         """
         Args:
             x_range: tuple specifying the range of input values (min, max).
-            data_dim: tuple specifying the shape of input data (e.g., (10, 1) for 10 samples of 1D input).
+            data_dim: tuple specifying the shape of input logs (e.g., (10, 1) for 10 samples of 1D input).
             N: number of samples.
             ground_truth: the ground truth function
             model: the model to train. If None, defaults to a simple MLP.
@@ -34,12 +34,13 @@ class Processor:
             optimizer: the optimizer to use for training.
             scheduler: the scheduler to use for training.
             seed (Optional[int]): random seed for reproducibility. If None, a random seed will be generated.
-            dtype: data type for model parameters and computations (default: torch.float32).
+            dtype: logs type for model parameters and computations (default: torch.float32).
         """
         self._set_environment(seed=seed, dtype=dtype)
 
         self.x_range = x_range
         self.data_dim = data_dim
+        self.d = math.prod(data_dim) # true dimensionality of the data
         self.N = N
 
         # Set defaults
@@ -50,12 +51,17 @@ class Processor:
         if criterion is None:
             criterion = nn.MSELoss()
 
-        x_train = qmc.LatinHypercube(d=math.prod(data_dim), rng=self.rng).random(N).reshape(N, *data_dim)
-        x_train = torch.from_numpy(x_train * (x_range[1] - x_range[0]) + x_range[0]).float().to(self.device)
         # Data setup
-        self.x_train = x_train
+        x_train = qmc.LatinHypercube(d=self.d, rng=self.rng).random(N).reshape(N, *data_dim)
+        x_train = x_train * (x_range[1] - x_range[0]) + x_range[0]
+        self.x_train = torch.from_numpy(x_train).float().to(self.device)
         self.y_train = ground_truth(self.x_train).to(self.device).squeeze()
-        self.x_test = x_train * 2
+
+        lin = np.linspace(x_range[0], x_range[1], self.N // self.d) # (N // d,)
+        x_axis = (np.eye(self.d)[None, ...] * lin[:, None, None]).reshape(-1, self.d) # (1, d, d) * (N // d, 1, 1) =  (N, d, d) -> reshape to (~N, d)
+        x_axis = x_axis.reshape(-1, *self.data_dim) # (~N, *dims)
+        x_test = np.vstack((x_train, x_axis)) * 2 # (~2N, *dims)
+        self.x_test = torch.from_numpy(x_test).float().to(self.device)
         self.y_test = ground_truth(self.x_test).to(self.device).squeeze()
 
         # Training
@@ -70,10 +76,10 @@ class Processor:
 
         # Logging
         self.logs = {
-            "x_train": self.x_train.cpu().numpy(),
-            "y_train": self.y_train.cpu().numpy(),
-            "x_test": self.x_test.cpu().numpy(),
-            "y_test": self.y_test.cpu().numpy(),
+            "x_train": self.x_train.cpu().numpy().reshape(-1, self.d),
+            "y_train": self.y_train.cpu().numpy().squeeze(),
+            "x_test": self.x_test.cpu().numpy().reshape(-1, self.d),
+            "y_test": self.y_test.cpu().numpy().squeeze(),
             "train_loss": [],
             "test_loss": [],
             "f_test": [],
@@ -202,6 +208,7 @@ class Processor:
                         h5_file.create_dataset(dataset_path, data=np.array(value))
                     except (TypeError, ValueError):
                         # If conversion fails, try as bytes string
+                        warnings.warn(f"Could not save {key} as array. Saving as string instead.")
                         h5_file.create_dataset(dataset_path, data=str(value).encode('utf-8'))
 
         os.makedirs(output_dir, exist_ok=True)
@@ -213,12 +220,12 @@ class Processor:
         torch.save(self.model.state_dict(), model_path)
 
     def print_summary(self):
-        """Print training summary from logged data."""
+        """Print training summary from logged logs."""
         preds_shape = np.array(self.logs['f_test']).shape
         hidden_shape = np.array(self.logs['hidden_states']).shape
 
         print("\n" + "="*75)
-        print("TRAINING SUMMARY (from logged data)")
+        print("TRAINING SUMMARY (from logged logs)")
         print("="*75)
         print(f"\n[Configuration]")
         print(f"  Epochs: {self.epochs}")
@@ -282,20 +289,25 @@ class Processor:
 
 def main():
     """Main training script using OOP Processor."""
+    model = SimpleTransformerModel(input_dim=1)
+    optimizer = optim.Adam(model.parameters())
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=200, gamma=0.5)
     processor = Processor(
         x_range=(-8, 8),
         data_dim=(10, 1),
         N=2048,
         ground_truth=topksubset(3, 1),
-        model=SimpleTransformerModel(input_dim=1, tropical=True),
-        epochs=1000,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        epochs=3000,
         criterion=nn.MSELoss(reduction='mean'),
         seed=42
     )
 
     processor.run()
     processor.print_summary()
-    processor.save('train_out/MHTA_training_data.h5', output_dir='train_out')
+    processor.save('train_out/MHA_training_data.h5', output_dir='train_out')
 
 if __name__ == '__main__':
     main()

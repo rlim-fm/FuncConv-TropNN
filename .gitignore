@@ -220,6 +220,6 @@ __marimo__/
 # macOS
 .DS_Store
 
-# output files and data
+# output files and logs
 visualizations
 train_out

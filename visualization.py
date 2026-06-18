@@ -21,43 +21,25 @@ from tqdm import trange
 from util import ParameterizedCurve
 
 class Visualizer:
-    def __init__(self, data=None, metadata=None):
-        self.data = data or {}
+    def __init__(self, logs=None, metadata=None):
+        self.logs = logs or {}
         self.metadata = metadata or {}
 
     def load_training_data(self, h5_filename='train_out/training_data.h5'):
-        """Load all training data from HDF5 file."""
+        """Load all training logs from HDF5 file."""
         with h5py.File(h5_filename, 'r') as hf:
-            # Load losses
-            train_loss = hf['logs/train_loss'][:]
-            test_loss = hf['logs/test_loss'][:]
-
-            # Load test data
-            x_test = hf['logs/x_test'][:]
-            y_test = hf['logs/y_test'][:]
-            f_test = hf['logs/f_test'][:]  # [E, N]
-            hidden_states = hf['logs/hidden_states'][:]  # [E, N, H]
+            # Load logs
+            self.logs = {key: hf['logs'][key][()] for key in hf['logs'].keys()}
 
             # Load metadata
-            metadata = {key: hf['metadata'][key][()] for key in hf['metadata'].keys()}
-
-        self.data = {
-            'train_loss': train_loss,
-            'test_loss': test_loss,
-            'x_test': x_test.reshape(x_test.shape[0], -1),  # Flatten if needed
-            'y_test': y_test.squeeze(), # [N,]
-            'f_test': f_test.squeeze(), # [E, N]
-            'hidden_states': hidden_states.reshape(hidden_states.shape[0], hidden_states.shape[1], -1),
-        }
-        self.metadata = metadata
+            self.metadata = {key: hf['metadata'][key][()] for key in hf['metadata'].keys()}
 
     @staticmethod
-    def from_processor_data(data, metadata):
-        return Visualizer(data=data, metadata=metadata)
+    def from_processor_data(proc):
+        return Visualizer(logs=proc.logs, metadata=proc.metadata)
 
     def convergence_visualization_1d(self,
-                                     line: Optional[ParameterizedCurve] = None,
-                                     t_range: Optional[Tuple[float, float]] = None,
+                                     axis=0,
                                      output_path: Optional[str] = None,
                                      *,
                                      x_test: Optional[np.ndarray] = None,
@@ -68,7 +50,7 @@ class Visualizer:
 
         Args:
             line: ParameterizedCurve object. If None, defaults to varying the first input dimension.
-            t_range: (t_min, t_max) parameter x_range. If None, defaults to data x_range on first axis.
+            t_range: (t_min, t_max) parameter x_range. If None, defaults to logs x_range on first axis.
             output_path: where to save the GIF
             x_test: (n_samples, input_dim) test inputs for determining line and ground truth
             y_test: (n_samples,) ground truth outputs for the test inputs
@@ -77,41 +59,10 @@ class Visualizer:
         Returns:
             FuncAnimation object for the 1D convergence animation
         """
-        input_dim = math.prod(self.metadata['data_dim'])
-        if x_test is None:
-            x_test = self.data['x_test']
-        if y_test is None:
-            y_test = self.data['y_test']
-        if f_test is None:
-            f_test = self.data['f_test']
-        epochs = int(self.metadata.get('epochs', len(f_test)))
+        x_1d, y_1d, preds_1d, _, _ = self._extract_1d_slice(axis=axis, x_test=x_test, y_test=y_test, f_test=f_test)
+        epochs = int(self.metadata.get('epochs', preds_1d.shape[0]))
 
-        # Default line: vary along first input dimension only
-        if line is None:
-            base = np.mean(x_test, axis=0)
-            line = ParameterizedCurve.axis_curve(input_dim, axis=0)
-
-        # Default parameter x_range: match data x_range
-        if t_range is None:
-            t_range = (np.min(x_test[:, 0]), np.max(x_test[:, 0]))
-
-        # Generate line points for visualization
-        n_line_points = 256
-        t_values = np.linspace(t_range[0], t_range[1], n_line_points)
-        line_points = line(t_values)  # [n_line_points, input_dim]
-
-        # Evaluate ground truth and f_test along the line
-        with torch.no_grad():
-            line_points_torch = torch.from_numpy(line_points).float()
-            if line_points_torch.dim() == 1:
-                line_points_torch = line_points_torch.unsqueeze(-1)
-            ground_truth_line = y_test  # This will need to match line evaluation
-            pred_line = np.array([f_test[epoch] for epoch in range(epochs)])
-
-        # For simplicity, extract 1D slice along first axis for ground truth
-        x_1d, y_1d, preds_1d, _, _ = self._extract_1d_slice(axis=0)
-
-        # Create animation using the extracted 1D data
+        # Create animation using the extracted 1D logs
         fig, ax = plt.subplots(figsize=(12, 7))
 
         # Plot ground truth analytical line
@@ -182,11 +133,11 @@ class Visualizer:
             FuncAnimation object for the PCA 3D convergence animation
         """
         if y_test is None:
-            y_test = self.data['y_test']
+            y_test = self.logs['y_test']
         if f_test is None:
-            f_test = self.data['f_test']
+            f_test = self.logs['f_test']
         if hidden_states is None:
-            hidden_states = self.data['hidden_states']
+            hidden_states = self.logs['hidden_states']
         
         assert f_test.shape[
                    1:] == y_test.shape, f"preds shape {f_test.shape}[1:] must match y_test shape {y_test.shape} on dimensions"
@@ -315,13 +266,16 @@ class Visualizer:
     def _extract_1d_slice(self,
                           axis=0,
                           other_idx=None,
-                          hidden_states: Optional[np.ndarray] = None,
-                          x_test: Optional[np.ndarray] = None,
-                          y_test: Optional[np.ndarray] = None,
-                          f_test: Optional[np.ndarray] = None,
+                          hidden_states: Optional[np.ndarray]=None,
+                          x_test: Optional[np.ndarray]=None,
+                          y_test: Optional[np.ndarray]=None,
+                          f_test: Optional[np.ndarray]=None,
+                          *,
+                          tolerance: Optional[float]=0.01,
+                          p_norm: str | float | int=np.inf,
                           **kwargs):
         """
-        Extract a 1D slice of the data along the specified axis.
+        Extract a 1D slice of the logs along the specified axis.
         
         Args:
             x_test: (n_samples, input_dim) - test inputs
@@ -330,31 +284,33 @@ class Visualizer:
             hidden_states: (epochs, n_samples, hidden_dim) - hidden states
             axis: which axis to vary (default: 0 for x_1)
             other_idx: sample index to use for other dimensions (if None, use mean)
+            tolerance: tolerance for selecting samples along other dimensions
+            p_norm: norm to use for plotting
         
         Returns:
             Sorted arrays for 1D visualization
         """
         if x_test is None:
-            x_test = self.data['x_test']
+            x_test = self.logs['x_test']
         if y_test is None:
-            y_test = self.data['y_test']
+            y_test = self.logs['y_test']
         if f_test is None:
-            f_test = self.data['f_test']
+            f_test = self.logs['f_test']
         if hidden_states is None:
-            hidden_states = self.data['hidden_states']
+            hidden_states = self.logs['hidden_states']
         n_samples = x_test.shape[0]
         
         # Find samples that vary along the specified axis
         # Use a slice where other dimensions are approximately constant
         if other_idx is None:
             # Create a slice by selecting samples near the median of other dimensions
-            mask = np.ones(n_samples, dtype=bool)
-            for d in range(x_test.shape[1]):
-                if d != axis:
-                    median_val = np.median(x_test[:, d])
-                    tolerance = 0.2 * (np.max(x_test[:, d]) - np.min(x_test[:, d]))
-                    mask &= np.abs(x_test[:, d] - median_val) < tolerance
-            indices = np.where(mask)[0]
+            proj_x_test = x_test.copy()
+            proj_x_test[..., axis] = 0
+            eps = tolerance * np.linalg.norm(np.var(proj_x_test, axis=0), ord=p_norm)
+            if p_norm in ['inf', 'infty']:
+                p_norm = np.inf
+            condition = np.linalg.norm(x=x_test, ord=p_norm, axis=-1) < eps
+            indices = np.where(condition)[0]
         else:
             indices = np.arange(n_samples)
         
@@ -369,8 +325,8 @@ class Visualizer:
         
         x_1d = x_test[indices, axis]
         y_1d = y_test[indices]
-        preds_1d = f_test[:, indices]  # [epochs, n_selected_samples]
-        hidden_1d = hidden_states[:, indices, :]  # [epochs, n_selected_samples, hidden_dim]
+        preds_1d = f_test[:, indices]  # [E, n_selected_samples]
+        hidden_1d = hidden_states[:, indices, :]  # [E, n_selected_samples, hidden_dim]
         
         return x_1d, y_1d, preds_1d, hidden_1d, indices
 
@@ -379,50 +335,60 @@ class Visualizer:
                           output_path: Optional[str] = None,
                           *,
                           train_loss: Optional[np.ndarray] = None,
-                          test_loss: Optional[np.ndarray] = None):
-        """Plot training and test loss history."""
+                          test_loss: Optional[np.ndarray] = None) -> plt.figure:
+        """
+        Plot the training and test loss of the model.
+
+        Args:
+            output_path: the path to save the plot
+            train_loss: train loss (E,)
+            test_loss: test loss (E,)
+
+        Returns:
+            fig: matplotlib figure
+        """
         if train_loss is None:
-            train_loss = self.data['train_loss']
+            train_loss = self.logs['train_loss']
         if test_loss is None:
-            test_loss = self.data['test_loss']
-        plt.figure(figsize=(10, 6))
-        plt.plot(train_loss, linewidth=2, label='Train Loss', alpha=0.8)
-        plt.plot(test_loss, linewidth=2, label='Test Loss', alpha=0.8)
-        plt.title('Training Loss History', fontsize=14)
-        plt.xlabel('Epoch', fontsize=12)
-        plt.ylabel('MSE Loss', fontsize=12)
-        plt.yscale('log')
-        plt.grid(True, linestyle='--', alpha=0.6)
-        plt.legend(fontsize=11)
-        plt.tight_layout()
+            test_loss = self.logs['test_loss']
+        fig = plt.figure(figsize=(10, 6))
+        ax = fig.add_subplot(111)
+        ax.plot(train_loss, linewidth=2, label='Train Loss', alpha=0.8)
+        ax.plot(test_loss, linewidth=2, label='Test Loss', alpha=0.8)
+        ax.set_title('Training Loss History', fontsize=14)
+        ax.set_xlabel('Epoch', fontsize=12)
+        ax.set_ylabel('MSE Loss', fontsize=12)
+        ax.set_yscale('log')
+        ax.grid(True, linestyle='--', alpha=0.6)
+        ax.legend(fontsize=11)
+        fig.tight_layout()
         if output_path is not None:
             plt.savefig(output_path, dpi=150)
-            plt.close()
             print(f"✓ Loss history saved to '{output_path}'")
-        return plt
+        return fig
 
 
     def print_summary(self):
-        """Print training summary from logged data."""
-        preds_shape = np.array(self.data['f_test']).shape
-        hidden_shape = np.array(self.data['hidden_states']).shape
+        """Print training summary from logged logs."""
+        preds_shape = np.array(self.logs['f_test']).shape
+        hidden_shape = np.array(self.logs['hidden_states']).shape
     
         print("\n" + "=" * 75)
-        print("TRAINING SUMMARY (from logged data)")
+        print("TRAINING SUMMARY (from logged logs)")
         print("=" * 75)
         print(f"\n[Loss Statistics]")
-        print(f"  Final train loss: {self.data['train_loss'][-1]:.6f}")
-        print(f"  Final test loss:  {self.data['test_loss'][-1]:.6f}")
-        print(f"  Best train loss:  {np.min(self.data['train_loss']):.6f} (epoch {np.argmin(self.data['train_loss'])})")
-        print(f"  Best test loss:   {np.min(self.data['test_loss']):.6f} (epoch {np.argmin(self.data['test_loss'])})")
+        print(f"  Final train loss: {self.logs['train_loss'][-1]:.6f}")
+        print(f"  Final test loss:  {self.logs['test_loss'][-1]:.6f}")
+        print(f"  Best train loss:  {np.min(self.logs['train_loss']):.6f} (epoch {np.argmin(self.logs['train_loss'])})")
+        print(f"  Best test loss:   {np.min(self.logs['test_loss']):.6f} (epoch {np.argmin(self.logs['test_loss'])})")
         print(f"\n[HDF5 File Structure]")
         print(f"  ├── logs/")
-        print(f"  │   ├── x_train: {self.data['x_train'].shape}")
-        print(f"  │   ├── y_train: {self.data['y_train'].shape}")
-        print(f"  │   ├── x_test: {self.data['x_test'].shape}")
-        print(f"  │   ├── y_test: {self.data['y_test'].shape}")
-        print(f"  │   ├── train_loss: {len(self.data['train_loss'])} entries")
-        print(f"  │   ├── test_loss: {len(self.data['test_loss'])} entries")
+        print(f"  │   ├── x_train: {self.logs['x_train'].shape}")
+        print(f"  │   ├── y_train: {self.logs['y_train'].shape}")
+        print(f"  │   ├── x_test: {self.logs['x_test'].shape}")
+        print(f"  │   ├── y_test: {self.logs['y_test'].shape}")
+        print(f"  │   ├── train_loss: {len(self.logs['train_loss'])} entries")
+        print(f"  │   ├── test_loss: {len(self.logs['test_loss'])} entries")
         print(f"  │   ├── f_test: {preds_shape} entries")
         print(f"  │   └── hidden_states: {hidden_shape} entries")
         print(f"  └── metadata/")
@@ -453,8 +419,7 @@ class Visualizer:
         # 2. 1D convergence with default axis-aligned line (along x_1)
         print("\nCreating 1D convergence animation...")
         self.convergence_visualization_1d(
-            line=None,  # Uses default: axis-aligned along x_1
-            t_range=None,  # Uses data x_range
+            axis=0,
             output_path=f'visualizations/topk-sum/{name}_1d_convergence.gif'
         )
 
@@ -484,7 +449,7 @@ class Visualizer:
 def main():
     """Main visualization pipeline"""
     train_filename = "MHA_training_data"
-    print("Loading training data...")
+    print("Loading training logs...")
     visualizer = Visualizer()
     visualizer.load_training_data(f'train_out/{train_filename}.h5')
     visualizer.visualize_full(train_filename)

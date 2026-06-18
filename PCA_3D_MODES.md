@@ -124,9 +124,9 @@ The `main()` function now generates both visualizations:
 # Mode 1: Static manifold
 print("Creating PCA 3D visualization (anchor epoch mode)...")
 create_pca_3d_animation(
-    visualizer.data['y_test'],
-    visualizer.data['predictions'],
-    visualizer.data['hidden_states'],
+    visualizer.logs['y_test'],
+    visualizer.logs['predictions'],
+    visualizer.logs['hidden_states'],
     pca_epoch=-1,
     output_path='visualizations/topk-sum/pca_3d_convergence.gif'
 )
@@ -134,9 +134,9 @@ create_pca_3d_animation(
 # Mode 2: Procrustes-aligned evolving manifold
 print("Creating PCA 3D visualization (all epochs + Procrustes mode)...")
 create_pca_3d_animation(
-    visualizer.data['y_test'],
-    visualizer.data['predictions'],
-    visualizer.data['hidden_states'],
+    visualizer.logs['y_test'],
+    visualizer.logs['predictions'],
+    visualizer.logs['hidden_states'],
     pca_epoch='all',
     output_path='visualizations/topk-sum/pca_3d_convergence_procrustes.gif'
 )
