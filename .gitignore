@@ -222,4 +222,4 @@ __marimo__/
 
 # output files and data
 visualizations
-out
+train_out

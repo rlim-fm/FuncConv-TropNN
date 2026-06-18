@@ -51,13 +51,12 @@ class Processor:
             criterion = nn.MSELoss()
 
         x_train = qmc.LatinHypercube(d=math.prod(data_dim), rng=self.rng).random(N).reshape(N, *data_dim)
-
+        x_train = torch.from_numpy(x_train * (x_range[1] - x_range[0]) + x_range[0]).float().to(self.device)
         # Data setup
-        self.x_train = torch.from_numpy(x_train * (x_range[1] - x_range[0]) + x_range[0]).float().to(self.device)
-        self.y_train = ground_truth(self.x_train).to(self.device)
-        x_test = x_train * 2  # double x_range for test set
-        self.x_test = torch.from_numpy(x_test).float().to(self.device)
-        self.y_test = ground_truth(self.x_test).to(self.device)
+        self.x_train = x_train
+        self.y_train = ground_truth(self.x_train).to(self.device).squeeze()
+        self.x_test = x_train * 2
+        self.y_test = ground_truth(self.x_test).to(self.device).squeeze()
 
         # Training
         self.model = model.to(self.device)
@@ -71,9 +70,13 @@ class Processor:
 
         # Logging
         self.logs = {
+            "x_train": self.x_train.cpu().numpy(),
+            "y_train": self.y_train.cpu().numpy(),
+            "x_test": self.x_test.cpu().numpy(),
+            "y_test": self.y_test.cpu().numpy(),
             "train_loss": [],
             "test_loss": [],
-            "y_test_preds": [],
+            "f_test": [],
             "hidden_states": [],
         }
         self.metadata = {
@@ -123,7 +126,7 @@ class Processor:
             logs = {
                 "train_loss": hf['logs/train_loss'][:],
                 "test_loss": hf['logs/test_loss'][:],
-                "y_test_preds": hf['logs/y_test_preds'][:],
+                "f_test": hf['logs/f_test'][:],
                 "hidden_states": hf['logs/hidden_states'][:],
             }
             metadata = {
@@ -144,7 +147,7 @@ class Processor:
         self.model.train()
         self.optimizer.zero_grad()
         hidden_train = self.model(self.x_train)
-        out_train = self.model.output_layer(hidden_train)
+        out_train = self.model.output_layer(hidden_train).squeeze()
         train_loss = self.criterion(out_train, self.y_train)
         self.logs['train_loss'].append(train_loss.item())
         train_loss.backward()
@@ -159,7 +162,7 @@ class Processor:
             out_test = self.model.output_layer(hidden_test).squeeze()
             test_loss = self.criterion(out_test, self.y_test)
             self.logs['test_loss'].append(test_loss.item())
-            self.logs['y_test_preds'].append(out_test.cpu().numpy())
+            self.logs['f_test'].append(out_test.cpu().numpy())
             self.logs['hidden_states'].append(hidden_test.cpu().numpy())
 
 
@@ -173,7 +176,7 @@ class Processor:
         print(f"\nTraining complete!")
         print(f"Final losses: Train Loss: {self.logs['train_loss'][-1]:.6f}, Test Loss: {self.logs['test_loss'][-1]:.6f}")
 
-    def save(self, filename='out/training_data.h5', output_dir='out'):
+    def save(self, filename='train_out/training_data.h5', output_dir='train_out'):
         to_save = {
             'logs': self.logs,
             'metadata': self.metadata,
@@ -211,7 +214,7 @@ class Processor:
 
     def print_summary(self):
         """Print training summary from logged data."""
-        preds_shape = np.array(self.logs['y_test_preds']).shape
+        preds_shape = np.array(self.logs['f_test']).shape
         hidden_shape = np.array(self.logs['hidden_states']).shape
 
         print("\n" + "="*75)
@@ -231,20 +234,25 @@ class Processor:
         print(f"  Best train loss:  {np.min(self.logs['train_loss']):.6f} (epoch {np.argmin(self.logs['train_loss'])})")
         print(f"  Best test loss:   {np.min(self.logs['test_loss']):.6f} (epoch {np.argmin(self.logs['test_loss'])})")
         print(f"\n[HDF5 File Structure]")
-        print(f"  ├── training/")
-        print(f"  │   ├── train_loss (shape: {(len(self.logs['train_loss']),)})")
-        print(f"  │   ├── test_loss (shape: {(len(self.logs['test_loss']),)})")
-        print(f"  │   ├── x_train (shape: {self.x_train.shape})")
-        print(f"  │   └── y_train (shape: {self.y_train.shape})")
-        print(f"  ├── test/")
-        print(f"  │   ├── predictions (shape: {preds_shape})")
-        print(f"  │   ├── hidden_states (shape: {hidden_shape})")
-        print(f"  │   ├── x_test (shape: {self.x_test.shape})")
-        print(f"  │   └── y_test (shape: {self.y_test.shape})")
+        print(f"  ├── logs/")
+        print(f"  │   ├── x_train: {self.logs['x_train'].shape}")
+        print(f"  │   ├── y_train: {self.logs['y_train'].shape}")
+        print(f"  │   ├── x_test: {self.logs['x_test'].shape}")
+        print(f"  │   ├── y_test: {self.logs['y_test'].shape}")
+        print(f"  │   ├── train_loss: {len(self.logs['train_loss'])} entries")
+        print(f"  │   ├── test_loss: {len(self.logs['test_loss'])} entries")
+        print(f"  │   ├── f_test: {preds_shape} entries")
+        print(f"  │   └── hidden_states: {hidden_shape} entries")
         print(f"  └── metadata/")
-        print(f"      ├── final_train_loss: {self.logs['train_loss'][-1]:.6f}")
-        print(f"      ├── final_test_loss: {self.logs['test_loss'][-1]:.6f}")
-        print(f"      └── ground_truth: topksubset(k=3, dim=1)")
+        print(f"      ├── x_range: {self.metadata['x_range']}")
+        print(f"      ├── data_dim: {self.metadata['data_dim']}")
+        print(f"      ├── N: {self.metadata['N']}")
+        print(f"      ├── ground_truth: {self.metadata['ground_truth']}")
+        print(f"      ├── model: {self.metadata['model']}")
+        print(f"      ├── optimizer: {self.metadata['optimizer']}")
+        print(f"      ├── criterion: {self.metadata['criterion']}")
+        print(f"      ├── scheduler: {self.metadata['scheduler']}")
+        print(f"      └── epochs: {self.metadata['epochs']}")
         print("="*75 + "\n")
 
     """HELPER FUNCTIONS"""
@@ -267,7 +275,7 @@ class Processor:
         self.logs = {
             "train_loss": [],
             "test_loss": [],
-            "y_test_preds": [],
+            "f_test": [],
             "hidden_states": [],
         }
 
@@ -279,7 +287,7 @@ def main():
         data_dim=(10, 1),
         N=2048,
         ground_truth=topksubset(3, 1),
-        model=SimpleTransformerModel(input_dim=1),
+        model=SimpleTransformerModel(input_dim=1, tropical=True),
         epochs=1000,
         criterion=nn.MSELoss(reduction='mean'),
         seed=42
@@ -287,7 +295,7 @@ def main():
 
     processor.run()
     processor.print_summary()
-    processor.save('out/attn_training_data.h5', output_dir='out')
+    processor.save('train_out/MHTA_training_data.h5', output_dir='train_out')
 
 if __name__ == '__main__':
     main()
