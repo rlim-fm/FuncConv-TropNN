@@ -1,6 +1,6 @@
 # BrainSpace: Functional Convergence Analysis for Neural Networks
 
-A framework for analyzing how neural networks converge to target functions during training through visualization and analysis of functional space dynamics.
+A framework for visualization how neural networks converge to target functions during training through OOD visualization and analysis of functional space dynamics.
 
 ## Overview
 
