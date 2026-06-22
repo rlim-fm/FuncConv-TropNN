@@ -14,6 +14,15 @@ This module provides tools for:
 - **Domain-aware visualization** distinguishing in-domain vs out-of-domain predictions
 - **Custom visualization framework** - write your own by inheriting from `Visualization`
 
+## Prebuilt Visualizations
+- **Loss History**: Training and test loss curves
+
+- **1D Convergence**: Animated function convergence along a single input axis
+
+- **3D PCA Convergence**: Hidden states evolution in PCA space (anchor mode)
+- **3D PCA Procrustes**: Hidden states evolution with per-epoch PCA alignment
+- **Function Space Convergence**: Visualize the convergence of the network in the function space as a 3D projection
+
 ## Quick Start (30 seconds)
 
 ```python

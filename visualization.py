@@ -152,6 +152,8 @@ class Convergence1D(Visualization):
         ax.set_ylabel('Output', fontsize=12)
         ax.set_title(f'Functional Convergence along $x_{self.axis}$ axis', fontsize=14)
         ax.grid(True, linestyle='--', alpha=0.4)
+        epoch_text = ax.text(0.05, 0.95, '', transform=ax.transAxes,
+                            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         ax.legend(fontsize=11)
 
         def init():
@@ -250,17 +252,22 @@ class PCA3D(Visualization):
 
         # Plot surface with colors
         colors = np.where(in_domain, 'blue', 'red')  # blue for in-domain, red for out
-        surf = ax.plot_trisurf(pc1_anchor, pc2_anchor, y_test, cmap='viridis', alpha=0.3)
+        surf_plot = ax.plot_trisurf(pc1_anchor, pc2_anchor, y_test, cmap='viridis', alpha=0.3)
 
         scatter_in = ax.scatter([], [], [], c='blue', label='In-domain', s=30, alpha=0.8)
         scatter_out = ax.scatter([], [], [], c='red', label='Out-of-domain', s=30, alpha=0.8)
-        epoch_text = ax.text2D(0.05, 0.95, '', fontsize=12)
+        epoch_text = ax.text2D(0.05, 0.95, '', transform=ax.transAxes, fontsize=12,
+                               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
         def update_frame(frame_idx):
             pc1 = pc1_frames[frame_idx]
             pc2 = pc2_frames[frame_idx]
             z = f_test[frame_idx]
-
+            if self.mode == 'procrustes':
+                nonlocal surf_plot
+                surf_plot.remove()
+                surf_plot = ax.plot_trisurf(pc1, pc2, y_test, cmap='viridis', alpha=0.3,
+                                            label='Ground Truth Surface')
             scatter_in._offsets3d = (pc1[in_domain], pc2[in_domain], z[in_domain])
             scatter_out._offsets3d = (pc1[~in_domain], pc2[~in_domain], z[~in_domain])
             epoch_text.set_text(f'Epoch: {frame_idx * self.sampling}')
@@ -275,6 +282,7 @@ class PCA3D(Visualization):
         ax.set_xlabel('PC1')
         ax.set_ylabel('PC2')
         ax.set_zlabel('Output')
+        ax.set_title(f'Hidden State Convergence in PCA Space ({self.mode} mode)', fontsize=14)
         ax.legend(fontsize=10, loc='upper right')
 
         anim = FuncAnimation(fig, update_frame, frames=len(epochs), interval=50)
@@ -345,7 +353,8 @@ class Visualizer:
     Users just implement their own Visualization subclasses.
     """
 
-    def __init__(self, sampling: int = 1):
+    def __init__(self, name, sampling: int = 1):
+        self.name = name or "model"
         self.sampling = sampling
         self.visualizations: Dict[str, Visualization] = {}
         self.processor = None
@@ -368,9 +377,11 @@ class Visualizer:
             for viz in self.visualizations.values():
                 viz.update(self.processor, epoch)
 
-    def finalize(self, output_dir: str = 'visualizations/topk-sum', prefix: str = 'model'):
+    def finalize(self, output_dir: str = 'visualizations/topk-sum', prefix: Optional[str] = None):
         """Finalize all visualizations."""
         os.makedirs(output_dir, exist_ok=True)
+        if prefix is None:
+            prefix = self.name
 
         # Store processor data for access in finalize
         for viz in self.visualizations.values():

@@ -247,12 +247,12 @@ class Processor:
         torch.save(self.model.state_dict(), model_path)
 
     def print_summary(self):
-        """Print training summary from logged logs."""
+        """Print training summary from logs."""
         preds_shape = np.array(self.logs['f_test']).shape
         hidden_shape = np.array(self.logs['hidden_states']).shape
 
         print("\n" + "="*75)
-        print("TRAINING SUMMARY (from logged logs)")
+        print("TRAINING SUMMARY (from logs)")
         print("="*75)
         print(f"\n[Configuration]")
         print(f"  Epochs: {self.epochs}")
