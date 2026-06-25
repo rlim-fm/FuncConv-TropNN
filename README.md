@@ -206,3 +206,6 @@ visualizations/topk-sum/
 ## License
 
 See LICENSE file.
+
+## References
+The instantiation of Tropical Attention is from https://github.com/Baran-phys/Tropical-Attention.
